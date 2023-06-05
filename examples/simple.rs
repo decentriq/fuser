@@ -481,8 +481,8 @@ impl Filesystem for SimpleFS {
         _req: &Request,
         #[allow(unused_variables)] config: &mut KernelConfig,
     ) -> Result<(), c_int> {
-        #[cfg(feature = "abi-7-26")]
-        config.add_capabilities(FUSE_HANDLE_KILLPRIV).unwrap();
+        // #[cfg(feature = "abi-7-26")]
+        // config.add_capabilities(FUSE_HANDLE_KILLPRIV).unwrap();
 
         fs::create_dir_all(Path::new(&self.data_dir).join("inodes")).unwrap();
         fs::create_dir_all(Path::new(&self.data_dir).join("contents")).unwrap();
@@ -529,7 +529,7 @@ impl Filesystem for SimpleFS {
         }
 
         match self.lookup_name(parent, name) {
-            Ok(attrs) => reply.entry(&Duration::new(0, 0), &attrs.into(), 0),
+            Ok(attrs) => reply.entry(&Duration::new(1000 * 1000, 0), &attrs.into(), 0),
             Err(error_code) => reply.error(error_code),
         }
     }
@@ -538,7 +538,11 @@ impl Filesystem for SimpleFS {
 
     fn getattr(&mut self, _req: &Request, inode: u64, reply: ReplyAttr) {
         match self.get_inode(inode) {
-            Ok(attrs) => reply.attr(&Duration::new(0, 0), &attrs.into()),
+            Ok(attrs) => {
+                let file_attr: fuser::FileAttr = attrs.into();
+                log::info!("getattr => {:?}", file_attr);
+                reply.attr(&Duration::new(1000 * 1000, 0), &file_attr)
+            },
             Err(error_code) => reply.error(error_code),
         }
     }
@@ -587,7 +591,7 @@ impl Filesystem for SimpleFS {
             }
             attrs.last_metadata_changed = time_now();
             self.write_inode(&attrs);
-            reply.attr(&Duration::new(0, 0), &attrs.into());
+            reply.attr(&Duration::new(1000 * 1000, 0), &attrs.into());
             return;
         }
 
@@ -634,7 +638,7 @@ impl Filesystem for SimpleFS {
             }
             attrs.last_metadata_changed = time_now();
             self.write_inode(&attrs);
-            reply.attr(&Duration::new(0, 0), &attrs.into());
+            reply.attr(&Duration::new(1000 * 1000, 0), &attrs.into());
             return;
         }
 
@@ -721,7 +725,7 @@ impl Filesystem for SimpleFS {
         }
 
         let attrs = self.get_inode(inode).unwrap();
-        reply.attr(&Duration::new(0, 0), &attrs.into());
+        reply.attr(&Duration::new(1000 * 1000, 0), &attrs.into());
         return;
     }
 
@@ -822,7 +826,7 @@ impl Filesystem for SimpleFS {
         self.write_directory_content(parent, entries);
 
         // TODO: implement flags
-        reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
+        reply.entry(&Duration::new(1000 * 1000, 0), &attrs.into(), 0);
     }
 
     fn mkdir(
@@ -896,7 +900,7 @@ impl Filesystem for SimpleFS {
         entries.insert(name.as_bytes().to_vec(), (inode, FileKind::Directory));
         self.write_directory_content(parent, entries);
 
-        reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
+        reply.entry(&Duration::new(1000 * 1000, 0), &attrs.into(), 0);
     }
 
     fn unlink(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
@@ -1080,7 +1084,7 @@ impl Filesystem for SimpleFS {
             .unwrap();
         file.write_all(link.as_os_str().as_bytes()).unwrap();
 
-        reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
+        reply.entry(&Duration::new(1000 * 1000, 0), &attrs.into(), 0);
     }
 
     fn rename(
@@ -1315,7 +1319,7 @@ impl Filesystem for SimpleFS {
             attrs.hardlinks += 1;
             attrs.last_metadata_changed = time_now();
             self.write_inode(&attrs);
-            reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
+            reply.entry(&Duration::new(1000 * 1000, 0), &attrs.into(), 0);
         }
     }
 
@@ -1440,6 +1444,8 @@ impl Filesystem for SimpleFS {
             // However, xfstests fail in that case
             clear_suid_sgid(&mut attrs);
             self.write_inode(&attrs);
+
+            // log::info!("Contents: {:?}", self.hello_txt_content);
 
             reply.written(data.len() as u32);
         } else {
@@ -1604,6 +1610,7 @@ impl Filesystem for SimpleFS {
         size: u32,
         reply: ReplyXattr,
     ) {
+        return reply.error(libc::ENOSYS);
         if let Ok(attrs) = self.get_inode(inode) {
             if let Err(error) = xattr_access_check(key.as_bytes(), libc::R_OK, &attrs, request) {
                 reply.error(error);
@@ -1770,7 +1777,7 @@ impl Filesystem for SimpleFS {
 
         // TODO: implement flags
         reply.created(
-            &Duration::new(0, 0),
+            &Duration::new(1000 * 1000, 0),
             &attrs.into(),
             0,
             self.allocate_next_file_handle(read, write),
@@ -2046,4 +2053,20 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+#[test]
+fn stale_data_bug() {
+    use std::io::Read;
+    use std::io::Write;
+    let mut file_read = std::fs::File::open("/tmp/mnt/hello.txt").unwrap();
+    let mut file_write = std::fs::File::create("/tmp/mnt/hello.txt").unwrap();
+    file_write.write_all("Init".as_bytes()).unwrap();
+    let mut buffer1 = vec![];
+    file_read.read_to_end(&mut buffer1).unwrap();
+    println!("buffer1 {:?}", buffer1);
+    file_write.write_all("Hello World!".as_bytes()).unwrap();
+    let mut buffer2 = vec![];
+    file_read.read_to_end(&mut buffer2).unwrap();
+    println!("buffer2 {:?}", buffer2);
 }
